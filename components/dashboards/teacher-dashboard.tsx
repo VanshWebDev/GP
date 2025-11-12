@@ -10,6 +10,17 @@ import { useToast } from "@/hooks/use-toast"
 import { useSupabaseWebSocket } from "@/hooks/use-supabase-websocket"
 import { WebSocketStatus } from "@/components/websocket-status"
 
+interface StudentInfo {
+  student_name?: string
+  student_id_number?: string
+  mobile_no?: string
+  email?: string
+  branch?: string
+  course?: string
+  section?: string
+  teacher_comment?: string
+}
+
 interface GatePassRequest {
   id: string
   student_id: string
@@ -23,6 +34,24 @@ interface GatePassRequest {
   profiles?: {
     full_name: string
     email: string
+  }
+}
+
+// Helper function to parse student info from teacher_notes
+const parseStudentInfo = (teacherNotes: string | null): { studentInfo: StudentInfo | null; actualNotes: string | null } => {
+  if (!teacherNotes) return { studentInfo: null, actualNotes: null }
+  
+  try {
+    const parsed = JSON.parse(teacherNotes)
+    // Check if it's student info (has student_name or student_id_number)
+    if (parsed.student_name || parsed.student_id_number) {
+      return { studentInfo: parsed as StudentInfo, actualNotes: null }
+    }
+    // Otherwise it's actual teacher notes
+    return { studentInfo: null, actualNotes: teacherNotes }
+  } catch {
+    // Not JSON, so it's actual teacher notes
+    return { studentInfo: null, actualNotes: teacherNotes }
   }
 }
 
@@ -95,12 +124,18 @@ export default function TeacherDashboard({ userId }: { userId: string }) {
   }, [])
 
   const handleApprove = async (requestId: string) => {
+    // Preserve student info if it exists in teacher_notes
+    const { studentInfo } = parseStudentInfo(selectedRequest?.teacher_notes || null)
+    const finalNotes = studentInfo 
+      ? JSON.stringify({ ...studentInfo, teacher_comment: notes })
+      : notes
+
     const { error } = await supabase
       .from("gate_pass_requests")
       .update({
         status: "approved",
         teacher_id: userId,
-        teacher_notes: notes,
+        teacher_notes: finalNotes,
         updated_at: new Date().toISOString(),
       })
       .eq("id", requestId)
@@ -119,12 +154,18 @@ export default function TeacherDashboard({ userId }: { userId: string }) {
   }
 
   const handleDeny = async (requestId: string) => {
+    // Preserve student info if it exists in teacher_notes
+    const { studentInfo } = parseStudentInfo(selectedRequest?.teacher_notes || null)
+    const finalNotes = studentInfo 
+      ? JSON.stringify({ ...studentInfo, teacher_comment: notes })
+      : notes
+
     const { error } = await supabase
       .from("gate_pass_requests")
       .update({
         status: "denied",
         teacher_id: userId,
-        teacher_notes: notes,
+        teacher_notes: finalNotes,
         updated_at: new Date().toISOString(),
       })
       .eq("id", requestId)
@@ -210,9 +251,23 @@ export default function TeacherDashboard({ userId }: { userId: string }) {
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-2 text-sm">
-                        <p>
-                          <span className="font-semibold">Student ID:</span> {request.student_id.slice(0, 8)}...
-                        </p>
+                        {(() => {
+                          const { studentInfo } = parseStudentInfo(request.teacher_notes)
+                          if (studentInfo) {
+                            return (
+                              <>
+                                <p><span className="font-semibold">Name:</span> {studentInfo.student_name}</p>
+                                <p><span className="font-semibold">Student ID:</span> {studentInfo.student_id_number}</p>
+                                <p><span className="font-semibold">Branch:</span> {studentInfo.branch} - {studentInfo.course} - Section {studentInfo.section}</p>
+                              </>
+                            )
+                          }
+                          return (
+                            <p>
+                              <span className="font-semibold">Student ID:</span> {request.student_id.slice(0, 8)}...
+                            </p>
+                          )
+                        })()}
                         <p>
                           <span className="font-semibold">Requested:</span>{" "}
                           {new Date(request.created_at).toLocaleDateString()}
@@ -262,11 +317,35 @@ export default function TeacherDashboard({ userId }: { userId: string }) {
                           <span className="font-semibold">Processed:</span>{" "}
                           {new Date(request.updated_at).toLocaleDateString()}
                         </p>
-                        {request.teacher_notes && (
-                          <p className="bg-gray-100 p-2 rounded">
-                            <span className="font-semibold">Notes:</span> {request.teacher_notes}
-                          </p>
-                        )}
+                        {(() => {
+                          const { studentInfo, actualNotes } = parseStudentInfo(request.teacher_notes)
+                          return (
+                            <>
+                              {studentInfo && (
+                                <div className="bg-blue-50 p-3 rounded space-y-1 text-sm">
+                                  <p className="font-semibold text-blue-900 mb-2">Student Information:</p>
+                                  <p><span className="font-medium">Name:</span> {studentInfo.student_name}</p>
+                                  <p><span className="font-medium">Student ID:</span> {studentInfo.student_id_number}</p>
+                                  <p><span className="font-medium">Mobile:</span> {studentInfo.mobile_no}</p>
+                                  <p><span className="font-medium">Email:</span> {studentInfo.email}</p>
+                                  <p><span className="font-medium">Branch:</span> {studentInfo.branch}</p>
+                                  <p><span className="font-medium">Course:</span> {studentInfo.course}</p>
+                                  <p><span className="font-medium">Section:</span> {studentInfo.section}</p>
+                                  {studentInfo.teacher_comment && (
+                                    <p className="mt-2 pt-2 border-t border-blue-200">
+                                      <span className="font-medium">Teacher Comment:</span> {studentInfo.teacher_comment}
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                              {actualNotes && !studentInfo && (
+                                <p className="bg-gray-100 p-2 rounded">
+                                  <span className="font-semibold">Notes:</span> {actualNotes}
+                                </p>
+                              )}
+                            </>
+                          )
+                        })()}
                       </div>
                     </CardContent>
                   </Card>
@@ -283,22 +362,43 @@ export default function TeacherDashboard({ userId }: { userId: string }) {
                 <CardTitle>Review Request</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-2 text-sm">
-                  <p>
-                    <span className="font-semibold">Destination:</span> {selectedRequest.destination}
-                  </p>
-                  <p>
-                    <span className="font-semibold">Reason:</span> {selectedRequest.reason}
-                  </p>
-                  <p>
-                    <span className="font-semibold">Departure:</span>{" "}
-                    {new Date(selectedRequest.departure_time).toLocaleString()}
-                  </p>
-                  <p>
-                    <span className="font-semibold">Requested:</span>{" "}
-                    {new Date(selectedRequest.created_at).toLocaleDateString()}
-                  </p>
-                </div>
+                {(() => {
+                  const { studentInfo } = parseStudentInfo(selectedRequest.teacher_notes)
+                  return (
+                    <>
+                      {studentInfo && (
+                        <div className="bg-blue-50 p-3 rounded space-y-1 text-sm border border-blue-200">
+                          <p className="font-semibold text-blue-900 mb-2">Student Information:</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <p><span className="font-medium">Name:</span> {studentInfo.student_name}</p>
+                            <p><span className="font-medium">Student ID:</span> {studentInfo.student_id_number}</p>
+                            <p><span className="font-medium">Mobile:</span> {studentInfo.mobile_no}</p>
+                            <p><span className="font-medium">Email:</span> {studentInfo.email}</p>
+                            <p><span className="font-medium">Branch:</span> {studentInfo.branch}</p>
+                            <p><span className="font-medium">Course:</span> {studentInfo.course}</p>
+                            <p><span className="font-medium">Section:</span> {studentInfo.section}</p>
+                          </div>
+                        </div>
+                      )}
+                      <div className="space-y-2 text-sm">
+                        <p>
+                          <span className="font-semibold">Destination:</span> {selectedRequest.destination}
+                        </p>
+                        <p>
+                          <span className="font-semibold">Reason:</span> {selectedRequest.reason}
+                        </p>
+                        <p>
+                          <span className="font-semibold">Departure:</span>{" "}
+                          {new Date(selectedRequest.departure_time).toLocaleString()}
+                        </p>
+                        <p>
+                          <span className="font-semibold">Requested:</span>{" "}
+                          {new Date(selectedRequest.created_at).toLocaleDateString()}
+                        </p>
+                      </div>
+                    </>
+                  )
+                })()}
 
                 <div>
                   <label className="block text-sm font-semibold mb-2">Notes</label>

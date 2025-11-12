@@ -182,11 +182,30 @@ export default function StudentDashboard({ userId }: { userId: string }) {
                               <span className="font-semibold">Requested:</span>{" "}
                               {new Date(request.created_at).toLocaleDateString()}
                             </p>
-                            {request.teacher_notes && (
-                              <p className="bg-blue-50 p-2 rounded">
-                                <span className="font-semibold">Teacher Notes:</span> {request.teacher_notes}
-                              </p>
-                            )}
+                            {(() => {
+                              if (!request.teacher_notes) return null
+                              
+                              try {
+                                const parsed = JSON.parse(request.teacher_notes)
+                                // Check if it has teacher_comment
+                                if (parsed.teacher_comment) {
+                                  return (
+                                    <p className="bg-blue-50 p-2 rounded">
+                                      <span className="font-semibold">Teacher Notes:</span> {parsed.teacher_comment}
+                                    </p>
+                                  )
+                                }
+                                // If it's just student info JSON, don't show it
+                                return null
+                              } catch {
+                                // Not JSON, show as regular notes
+                                return (
+                                  <p className="bg-blue-50 p-2 rounded">
+                                    <span className="font-semibold">Teacher Notes:</span> {request.teacher_notes}
+                                  </p>
+                                )
+                              }
+                            })()}
                           </div>
                         </CardContent>
                       </div>
