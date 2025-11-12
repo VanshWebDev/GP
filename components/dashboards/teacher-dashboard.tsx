@@ -7,6 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
+import { useSupabaseWebSocket } from "@/hooks/use-supabase-websocket"
+import { WebSocketStatus } from "@/components/websocket-status"
 
 interface GatePassRequest {
   id: string
@@ -58,47 +60,38 @@ export default function TeacherDashboard({ userId }: { userId: string }) {
     else setAllRequests(data || [])
   }
 
+  // Enhanced WebSocket connection with better management
+  const { status: wsStatus, reconnect: reconnectWebSocket } = useSupabaseWebSocket({
+    channelName: "gate_pass_all",
+    table: "gate_pass_requests",
+    onInsert: (payload) => {
+      const newRequest = payload.new as GatePassRequest
+      if (newRequest.status === "pending") {
+        setPendingRequests((prev) => [newRequest, ...prev])
+        toast({
+          title: "New Request",
+          description: `New gate pass request to ${newRequest.destination}`,
+        })
+      }
+    },
+    onUpdate: (payload) => {
+      const updatedRequest = payload.new as GatePassRequest
+      setPendingRequests((prev) => prev.filter((req) => req.id !== updatedRequest.id))
+      setAllRequests((prev) => [updatedRequest, ...prev.filter((req) => req.id !== updatedRequest.id)])
+    },
+    onError: (error) => {
+      console.error("WebSocket error:", error)
+      toast({
+        title: "Connection Error",
+        description: "Real-time updates may be delayed. Attempting to reconnect...",
+        variant: "destructive",
+      })
+    },
+  })
+
   useEffect(() => {
     fetchRequests()
     fetchAllRequests()
-
-    const channel = supabase
-      .channel("gate_pass_all")
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "gate_pass_requests",
-          filter: "status=eq.pending",
-        },
-        (payload) => {
-          const newRequest = payload.new as GatePassRequest
-          setPendingRequests((prev) => [newRequest, ...prev])
-          toast({
-            title: "New Request",
-            description: `New gate pass request to ${newRequest.destination}`,
-          })
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "gate_pass_requests",
-        },
-        (payload) => {
-          const updatedRequest = payload.new as GatePassRequest
-          setPendingRequests((prev) => prev.filter((req) => req.id !== updatedRequest.id))
-          setAllRequests((prev) => [updatedRequest, ...prev.filter((req) => req.id !== updatedRequest.id)])
-        },
-      )
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
   }, [])
 
   const handleApprove = async (requestId: string) => {
@@ -170,7 +163,15 @@ export default function TeacherDashboard({ userId }: { userId: string }) {
     <div className="min-h-screen bg-gray-50">
       <nav className="bg-white border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-          <h1 className="text-2xl font-bold text-gray-900">Teacher Dashboard</h1>
+          <div className="flex items-center gap-4">
+            <h1 className="text-2xl font-bold text-gray-900">Teacher Dashboard</h1>
+            <WebSocketStatus status={wsStatus} />
+            {wsStatus === "error" && (
+              <Button variant="outline" size="sm" onClick={reconnectWebSocket}>
+                Reconnect
+              </Button>
+            )}
+          </div>
           <div className="flex gap-2">
             <Button variant={showHistory ? "default" : "outline"} onClick={() => setShowHistory(!showHistory)}>
               {showHistory ? "Pending" : "History"}

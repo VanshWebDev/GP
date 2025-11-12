@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge"
 import GatePassRequestForm from "@/components/forms/gate-pass-request-form"
 import { useRouter } from "next/navigation"
 import { useToast } from "@/hooks/use-toast"
+import { useSupabaseWebSocket } from "@/hooks/use-supabase-websocket"
+import { WebSocketStatus } from "@/components/websocket-status"
 
 interface GatePassRequest {
   id: string
@@ -39,45 +41,44 @@ export default function StudentDashboard({ userId }: { userId: string }) {
     setIsLoading(false)
   }
 
+  // Enhanced WebSocket connection with better management
+  const { status: wsStatus, reconnect: reconnectWebSocket } = useSupabaseWebSocket({
+    channelName: `gate_pass:${userId}`,
+    table: "gate_pass_requests",
+    filter: `student_id=eq.${userId}`,
+    onUpdate: (payload) => {
+      const updatedRequest = payload.new as GatePassRequest
+      setRequests((prev) => prev.map((req) => (req.id === updatedRequest.id ? updatedRequest : req)))
+
+      // Show toast notification on status change
+      if (updatedRequest.status === "approved") {
+        toast({
+          title: "Request Approved!",
+          description: `Your gate pass to ${updatedRequest.destination} has been approved.`,
+        })
+      } else if (updatedRequest.status === "denied") {
+        toast({
+          title: "Request Denied",
+          description: `Your gate pass request has been denied.${
+            updatedRequest.teacher_notes ? ` Reason: ${updatedRequest.teacher_notes}` : ""
+          }`,
+          variant: "destructive",
+        })
+      }
+    },
+    onError: (error) => {
+      console.error("WebSocket error:", error)
+      toast({
+        title: "Connection Error",
+        description: "Real-time updates may be delayed. Attempting to reconnect...",
+        variant: "destructive",
+      })
+    },
+  })
+
   useEffect(() => {
     fetchRequests()
-
-    const channel = supabase
-      .channel(`gate_pass:${userId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "gate_pass_requests",
-          filter: `student_id=eq.${userId}`,
-        },
-        (payload) => {
-          const updatedRequest = payload.new as GatePassRequest
-          setRequests((prev) => prev.map((req) => (req.id === updatedRequest.id ? updatedRequest : req)))
-
-          // Show toast notification on status change
-          if (updatedRequest.status === "approved") {
-            toast({
-              title: "Request Approved!",
-              description: `Your gate pass to ${updatedRequest.destination} has been approved.`,
-            })
-          } else if (updatedRequest.status === "denied") {
-            toast({
-              title: "Request Denied",
-              description: `Your gate pass request has been denied.${
-                updatedRequest.teacher_notes ? ` Reason: ${updatedRequest.teacher_notes}` : ""
-              }`,
-              variant: "destructive",
-            })
-          }
-        },
-      )
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId])
 
   const handleLogout = async () => {
@@ -111,7 +112,15 @@ export default function StudentDashboard({ userId }: { userId: string }) {
     <div className="min-h-screen bg-gray-50">
       <nav className="bg-white border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex justify-between items-center">
-          <h1 className="text-2xl font-bold text-gray-900">Student Dashboard</h1>
+          <div className="flex items-center gap-4">
+            <h1 className="text-2xl font-bold text-gray-900">Student Dashboard</h1>
+            <WebSocketStatus status={wsStatus} />
+            {wsStatus === "error" && (
+              <Button variant="outline" size="sm" onClick={reconnectWebSocket}>
+                Reconnect
+              </Button>
+            )}
+          </div>
           <Button variant="outline" onClick={handleLogout}>
             Logout
           </Button>
